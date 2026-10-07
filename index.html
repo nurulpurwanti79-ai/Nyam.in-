@@ -38,6 +38,8 @@ button,input,select{font:inherit}button{cursor:pointer;border:0}.app{display:fle
     <button data-page="employees">👩‍🍳 Pegawai & Upah</button>
     <button data-page="reports">📊 Laporan</button>
     <button data-page="health">🩺 Kesehatan Toko</button>
+    <button data-page="journal">📒 Jurnal Pembukuan</button>
+    <button data-page="funds">🏦 Uang Toko</button>
     <button data-page="access">🔐 Akses & Akun</button>
     <button data-page="backup">💾 Data</button>
   </div>
@@ -84,6 +86,8 @@ button,input,select{font:inherit}button{cursor:pointer;border:0}.app{display:fle
 
 <section id="noaccess" class="page hidden"><div class="card empty">Belum ada menu yang dibuka untuk akun pegawai. Minta pemilik mengatur di menu Akses &amp; PIN.</div></section>
 
+<section id="journal" class="page hidden"><div class="card section"><h2 style="margin-top:0">Jurnal Pembukuan</h2><div class="small">Terisi otomatis dari penjualan dan biaya operasional. Untuk mengubah, ubah data di menu asalnya.</div><div class="formgrid" style="margin-top:10px"><div class="field"><label>Bulan (kosongkan untuk semua)</label><input type="month" id="jMonth" oninput="renderJournal()"></div><div class="field"><label>Sumber</label><select id="jSrc" onchange="renderJournal()"><option value="">Semua</option><option value="in">Pendapatan</option><option value="ops">Biaya operasional</option></select></div></div><div id="journalSum" class="hl-grid" style="margin:12px 0"></div><div style="overflow-x:auto"><table class="table"><thead><tr><th>Tanggal</th><th>Akun &amp; keterangan</th><th>Debit</th><th>Kredit</th></tr></thead><tbody id="journalBody"></tbody></table></div></div></section>
+<section id="funds" class="page hidden"><div class="card section"><h2 style="margin-top:0">Uang Toko</h2><div class="small">Catat jumlah uang toko dan di mana uang itu disimpan.</div><div class="formgrid" style="margin-top:10px"><div class="field"><label>Disimpan di mana</label><input id="fLoc" list="fLocList" placeholder="Kas laci, brankas, rekening..."><datalist id="fLocList"></datalist></div><div class="field"><label>Jumlah (Rp)</label><input id="fAmount" type="number" min="0" inputmode="numeric"></div><div class="field"><label>Catatan</label><input id="fNote" placeholder="Opsional"></div></div><div class="actions"><button class="btn" onclick="addFund()">+ Simpan</button></div></div><div class="card section" id="fundSum"></div><div class="card section" style="overflow-x:auto"><table class="table"><thead><tr><th>Lokasi</th><th>Jumlah</th><th>Catatan</th><th>Dicatat</th><th></th></tr></thead><tbody id="fundBody"></tbody></table></div></section>
 <section id="health" class="page hidden"><div id="healthBox"></div></section>
 <section id="access" class="page hidden"><div class="two"><div class="card"><h2>Menu untuk pegawai</h2><p class="small">Centang menu yang boleh dibuka pegawai. Pengaturan ini ditegakkan di database, bukan hanya di tampilan. Akses &amp; Akun dan Data selalu hanya untuk pemilik. Pegawai hanya bisa melihat (tidak bisa tambah/hapus) di semua menu selain Kasir, dan HPP/laba disembunyikan dari mereka di Dashboard, Kasir, dan Produk. Menu Keuangan, Resep &amp; HPP, Operasional, Pegawai &amp; Upah, dan Laporan berisi angka uang atau biaya, jadi centang hanya bila Anda mau pegawai melihatnya.</p><div id="permList"></div></div>
 <div class="card"><h2>Akun terdaftar</h2><p class="small" id="acctNote" style="color:var(--danger);font-weight:700"></p><div class="tablewrap"><table class="table"><thead><tr><th>Email</th><th>Peran</th></tr></thead><tbody id="acctList"></tbody></table></div><p class="small" style="margin-top:12px">Pegawai mendaftar sendiri lewat tombol <b>Daftar</b> di layar login. Akunnya berstatus <b>Menunggu</b> sampai Anda mengubahnya menjadi <b>Pegawai</b> di sini. Memilih <b>Menunggu / nonaktif</b> mencabut akses akun tanpa menghapusnya. Pemilik tidak bisa mengubah perannya sendiri.</p></div>
@@ -110,7 +114,7 @@ const seed={ingredients:[
 products:[{name:'Udang Keju Lumer',price:5000,hpp:2500,unit:'pcs'},{name:'Dimsum Keju Lumer',price:5000,hpp:2475,unit:'pcs'},{name:'Crab Rangoon',price:5000,hpp:2617,unit:'pcs'}],recipes:[],operations:[],employees:[],expenses:[],sales:[]};
 const TABLES=['ingredients','products','recipes','operations','employees','expenses','sales'];
 const PAGES=[['dashboard','🏠 Dashboard'],['pos','🧾 Kasir / POS'],['finance','💰 Keuangan'],['products','🍱 Produk'],['ingredients','🥕 Bahan & Harga'],['recipes','📋 Resep & HPP'],['operations','⚙️ Operasional'],['employees','👩‍🍳 Pegawai & Upah'],['reports','📊 Laporan']];
-const OWNER_ONLY_PAGES=['access','backup','health'];
+const OWNER_ONLY_PAGES=['access','backup','health','journal','funds'];
 const defaultPerms=()=>({dashboard:false,pos:true,finance:false,products:false,ingredients:false,recipes:false,operations:false,employees:false,reports:false});
 const allPerms=()=>Object.fromEntries(PAGES.map(([id])=>[id,true]));
 const emptyDb=()=>({ingredients:[],products:[],recipes:[],operations:[],employees:[],expenses:[],sales:[]});
@@ -125,21 +129,23 @@ async function safe(fn){try{return await fn()}catch(e){console.warn(e);loadError
 async function fetchAll(table,order){let out=[],from=0,step=1000;for(;;){const {data,error}=await sb.from(table).select('*').order(order,{ascending:true}).range(from,from+step-1);if(error)throw error;out=out.concat(data||[]);if(!data||data.length<step)break;from+=step}return out}
 async function loadAll(){
  loadErrors=[];const o=role==='owner',can=k=>o||!!perms[k],none=async()=>[];
- const [ing,prod,rec,ops,emp,sal,exp]=await Promise.all([
+ const [ing,prod,rec,ops,emp,sal,exp,fnd]=await Promise.all([
   can('ingredients')?safe(()=>fetchAll('ingredients','created_at')):none(),
   safe(()=>fetchAll(o?'products':'products_staff','created_at')),
   can('recipes')?safe(()=>fetchAll('recipes','created_at')):none(),
   can('operations')?safe(()=>fetchAll('operations','created_at')):none(),
   can('employees')?safe(()=>fetchAll('employees','created_at')):none(),
   (o||can('reports'))?safe(()=>fetchAll('sales','sold_at')):(can('dashboard')||can('finance'))?safe(()=>fetchAll('sales_staff','sold_at')):none(),
-  can('finance')?safe(()=>fetchAll('expenses','created_at')):none()]);
+  can('finance')?safe(()=>fetchAll('expenses','created_at')):none(),
+  o?safe(()=>fetchAll('store_funds','created_at')):none()]);
  db={ingredients:ing.map(r=>({id:r.id,name:r.name,price:num(r.price),qty:num(r.qty),unit:r.unit})),
   products:prod.map(r=>({id:r.id,name:r.name,price:num(r.price),hpp:o?num(r.hpp):0,unit:r.unit})),
   recipes:rec.map(r=>({id:r.id,name:r.name,yield:num(r.yield_n),items:r.items||[],total:num(r.total),hpp:num(r.hpp)})),
-  operations:ops.map(r=>({id:r.id,name:r.name,amount:num(r.amount),period:r.period,status:r.status==='Hutang'?'Hutang':'Lunas',creditor:r.creditor||''})),
+  operations:ops.map(r=>({id:r.id,name:r.name,amount:num(r.amount),period:r.period,status:r.status==='Hutang'?'Hutang':'Lunas',creditor:r.creditor||'',time:r.created_at,paidAt:r.paid_at||null})),
   employees:emp.map(r=>({id:r.id,name:r.name,type:r.type,pay:num(r.pay)})),
   sales:sal.map(r=>({id:r.id,time:r.sold_at,items:r.items||[],total:num(r.total),hpp:num(r.hpp),method:r.method==='qris'?'qris':'tunai'})),
-  expenses:exp.map(r=>({id:r.id,date:r.spent_on,category:r.category,note:r.note||'',amount:num(r.amount)}))};
+  expenses:exp.map(r=>({id:r.id,date:r.spent_on,category:r.category,note:r.note||'',amount:num(r.amount)})),
+  funds:fnd.map(r=>({id:r.id,location:r.location||'',amount:num(r.amount),note:r.note||'',time:r.created_at}))};
  if(o)await loadAccounts();
  if(loadErrors.length)toast('Sebagian data gagal dimuat: '+loadErrors[0],5000)}
 async function loadAccounts(){if(role!=='owner')return;const {data,error}=await sb.from('profiles').select('id,email,role,created_at').order('created_at',{ascending:true});accounts=error?[]:(data||[])}
@@ -150,7 +156,29 @@ async function addIngredient(){let name=iName.value.trim(),price=+iPrice.value,q
 function pickOp(n){oName.value=n;oAmount.focus()}
 function toggleCreditor(){oCreditorField.style.display=oStatus.value==='Hutang'?'':'none'}
 async function addOperation(){let name=oName.value.trim(),amount=+oAmount.value,status=oStatus.value,creditor=oCreditor.value.trim();if(!name||!amount)return toast('Lengkapi biaya');if(status==='Hutang'&&!creditor)return toast('Isi hutang ke siapa');if(await run(sb.from('operations').insert({name,amount,period:oPeriod.value,status,creditor:status==='Hutang'?creditor:null}),'Biaya ditambahkan')){oName.value=oAmount.value=oCreditor.value='';oStatus.value='Lunas';toggleCreditor()}}
-async function markPaid(id){if(!confirm('Tandai hutang ini sudah lunas?'))return;const {data,error}=await sb.from('operations').update({status:'Lunas'}).eq('id',id).select();if(error||!data||!data.length)return toast('Gagal mengubah status'+(error?': '+error.message:''),4000);await refresh();toast('Hutang ditandai lunas')}
+async function markPaid(id){if(!confirm('Tandai hutang ini sudah lunas?'))return;const {data,error}=await sb.from('operations').update({status:'Lunas',paid_at:new Date().toISOString()}).eq('id',id).select();if(error||!data||!data.length)return toast('Gagal mengubah status'+(error?': '+error.message:''),4000);await refresh();toast('Hutang ditandai lunas')}
+function jrnEntries(){const E=[];
+db.sales.forEach(s=>{const its=s.items||[],it=its.slice(0,3).map(i=>`${i.name} x${i.qty}`).join(', ')+(its.length>3?', dll':'');E.push({t:new Date(s.time).getTime(),src:'in',desc:'Penjualan'+(it?': '+it:'')+(s.method==='qris'?' (QRIS)':''),L:[[s.method==='qris'?'Kas QRIS / Bank':'Kas',s.total,0],['Pendapatan Penjualan',0,s.total]]})});
+db.operations.forEach(o=>{const t=o.time?new Date(o.time).getTime():0,hut=o.status==='Hutang'||!!o.creditor;
+E.push({t,src:'ops',desc:`Biaya operasional: ${o.name} (${o.period})`+(hut?`, hutang ke ${o.creditor}`:''),L:[['Beban Operasional',o.amount,0],[hut?'Hutang Usaha':'Kas',0,o.amount]]});
+if(o.creditor&&o.status==='Lunas')E.push({t:o.paidAt?new Date(o.paidAt).getTime():t,src:'ops',desc:`Pelunasan hutang ke ${o.creditor}: ${o.name}`,L:[['Hutang Usaha',o.amount,0],['Kas',0,o.amount]]})});
+return E.sort((a,b)=>b.t-a.t)}
+function renderJournal(){const body=document.getElementById('journalBody');if(!body)return;
+if(!renderJournal._i){const d=new Date();jMonth.value=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;renderJournal._i=1}
+const mk=t=>{if(!t)return '';const d=new Date(t);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`},fd=t=>t?new Date(t).toLocaleDateString('id-ID',{day:'2-digit',month:'short',year:'numeric'}):'-',rp=v=>v?rupiah(v):'';
+const all=jrnEntries().filter(e=>(!jMonth.value||mk(e.t)===jMonth.value)&&(!jSrc.value||e.src===jSrc.value)),shown=all.slice(0,300);
+let inc=0,exp=0,dr=0,kr=0;all.forEach(e=>e.L.forEach(l=>{dr+=l[1];kr+=l[2];if(l[0]==='Pendapatan Penjualan')inc+=l[2];if(l[0]==='Beban Operasional')exp+=l[1]}));
+journalSum.innerHTML=`<div class="card kpi"><div class="label">Total Pendapatan</div><div class="value">${rupiah(inc)}</div></div><div class="card kpi"><div class="label">Beban Operasional</div><div class="value">${rupiah(exp)}</div></div><div class="card kpi"><div class="label">Pendapatan − Beban</div><div class="value" style="color:${inc-exp<0?'#c0504d':'inherit'}">${rupiah(inc-exp)}</div><div class="small">HPP bahan tidak dijurnal</div></div>`;
+body.innerHTML=shown.map(e=>`<tr><td>${fd(e.t)}</td><td><b>${esc(e.L[0][0])}</b></td><td>${rp(e.L[0][1])}</td><td></td></tr><tr><td></td><td style="padding-left:24px">${esc(e.L[1][0])}</td><td></td><td>${rp(e.L[1][2])}</td></tr><tr style="border-bottom:2px solid #edf3ef"><td></td><td colspan="3" class="small">${esc(e.desc)}</td></tr>`).join('')||'<tr><td colspan="4" class="empty">Belum ada jurnal untuk filter ini.</td></tr>';
+if(shown.length)body.innerHTML+=`<tr><td></td><td><b>Total (${all.length} jurnal${all.length>shown.length?', tampil '+shown.length+' terbaru':''})</b></td><td><b>${rupiah(dr)}</b></td><td><b>${rupiah(kr)}</b></td></tr>`}
+function renderFunds(){const body=document.getElementById('fundBody');if(!body)return;
+const F=db.funds||[],tot=F.reduce((a,f)=>a+f.amount,0),by={};F.forEach(f=>{const k=f.location.trim();by[k]=(by[k]||0)+f.amount});
+const keys=Object.keys(by).sort((a,b)=>by[b]-by[a]);
+fundSum.innerHTML=`<div class="label">Total Uang Toko</div><div class="value" style="font-size:26px;font-weight:800">${rupiah(tot)}</div>`+(keys.map(k=>`<div class="hl-row"><span>${esc(k)}</span><div class="hl-track"><div class="hl-bar b-gross" style="width:${tot>0?Math.round(by[k]/tot*100):0}%"></div></div><b>${rupiah(by[k])}</b></div>`).join('')||'<div class="empty">Belum ada catatan uang toko.</div>');
+fLocList.innerHTML=[...new Set(['Kas Laci','Brankas','Rekening Bank','QRIS / E-wallet',...keys])].map(k=>`<option value="${esc(k)}">`).join('');
+body.innerHTML=F.slice().reverse().map(f=>`<tr><td>${esc(f.location)}</td><td>${rupiah(f.amount)}</td><td>${esc(f.note||'-')}</td><td>${f.time?new Date(f.time).toLocaleDateString('id-ID',{day:'2-digit',month:'short',year:'numeric'}):'-'}</td><td><button class="btn secondary" onclick="editFund('${f.id}')">Ubah jumlah</button> ${delBtn('store_funds',f.id)}</td></tr>`).join('')||'<tr><td colspan="5" class="empty">Belum ada data.</td></tr>'}
+async function addFund(){const location=fLoc.value.trim(),amount=+fAmount.value;if(!location||fAmount.value===''||!(amount>=0))return toast('Isi lokasi dan jumlah');if(await run(sb.from('store_funds').insert({location,amount,note:fNote.value.trim()||null}),'Uang toko disimpan'))fLoc.value=fAmount.value=fNote.value=''}
+async function editFund(id){const f=(db.funds||[]).find(x=>x.id===id);if(!f)return;const v=prompt('Jumlah baru untuk '+f.location+' (Rp):',f.amount);if(v===null)return;const n=+String(v).replace(/[^0-9]/g,'');if(String(v).trim()===''||!isFinite(n))return toast('Jumlah tidak valid');const {data,error}=await sb.from('store_funds').update({amount:n}).eq('id',id).select();if(error||!data||!data.length)return toast('Gagal mengubah jumlah'+(error?': '+error.message:''),4000);await refresh();toast('Jumlah diperbarui')}
 function renderHealth(){const box=document.getElementById('healthBox');if(!box)return;
 const sm=(a,f)=>a.reduce((x,y)=>x+f(y),0),pc=(a,b)=>b>0?Math.round(a/b*100):0,S=db.sales,sales=sm(S,s=>s.total),cogs=sm(S,s=>s.hpp),gross=sales-cogs,ops=sm(db.operations,o=>o.amount),net=gross-ops,gm=pc(gross,sales),nm=pc(net,sales);
 const P={};S.forEach(s=>(s.items||[]).forEach(i=>{const n=i.name||'-',p=P[n]||(P[n]={n,q:0,r:0});p.q+=num(i.qty);p.r+=num(i.qty)*num(i.price)}));
@@ -181,7 +209,7 @@ box.innerHTML=`<div class="hl-head"><div><h2 style="margin:0">Kesehatan Toko</h2
 
 async function addEmployee(){let name=eName.value.trim(),pay=+ePay.value;if(!name||!pay)return toast('Lengkapi pegawai');if(await run(sb.from('employees').insert({name,type:eType.value,pay}),'Pegawai ditambahkan'))eName.value=ePay.value=''}
 async function addExpense(){const amount=+fAmount.value,date=fDate.value||todayISO();if(!(amount>0))return toast('Isi jumlah pengeluaran');if(await run(sb.from('expenses').insert({spent_on:date,category:fCat.value,note:fNote.value.trim()||null,amount}),'Pengeluaran dicatat')){fAmount.value=fNote.value=''}}
-async function delRow(table,id){if(table==='operations'&&role!=='owner')return toast('Hanya pemilik yang bisa menghapus biaya operasional',4000);if(table==='products')cart=cart.filter(c=>c.id!==id);await run(sb.from(table).delete().eq('id',id),'Data dihapus')}
+async function delRow(table,id){if((table==='operations'||table==='store_funds')&&role!=='owner')return toast('Hanya pemilik yang bisa menghapus data ini',4000);if(table==='products')cart=cart.filter(c=>c.id!==id);await run(sb.from(table).delete().eq('id',id),'Data dihapus')}
 const ingOptions=()=>db.ingredients.map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join('');
 function addRecipeRow(){const wrap=document.getElementById('recipeRows'),row=document.createElement('div');row.className='formgrid recipeRow';row.style.marginBottom='8px';row.innerHTML=`<div class="field"><label>Bahan</label><select class="rIng">${ingOptions()}</select></div><div class="field"><label>Pemakaian (sesuai satuan bahan)</label><input class="rQty" type="number" step="0.01" placeholder="contoh 100"></div>`;wrap.appendChild(row)}
 function refreshRecipeSelects(){document.querySelectorAll('.rIng').forEach(s=>{const c=s.value;s.innerHTML=ingOptions();if(c&&db.ingredients.some(x=>x.id===c))s.value=c})}
@@ -232,7 +260,7 @@ function renderAccess(){if(role!=='owner')return;permList.innerHTML=PAGES.map(([
  const pend=accounts.filter(a=>a.role==='pending').length;acctNote.textContent=pend?`⚠ ${pend} akun menunggu persetujuan. Ubah perannya menjadi Pegawai agar bisa masuk.`:'';
  acctList.innerHTML=accounts.map(a=>`<tr><td>${esc(a.email)}</td><td>${me&&a.id===me.id?'<b>Pemilik (Anda)</b>':`<select data-acct="${a.id}"><option value="owner" ${a.role==='owner'?'selected':''}>Pemilik</option><option value="staff" ${a.role==='staff'?'selected':''}>Pegawai</option><option value="pending" ${a.role==='pending'?'selected':''}>Menunggu / nonaktif</option></select>`}</td></tr>`).join('')||'<tr><td colspan="2" class="empty">Belum ada akun.</td></tr>';
  qrisPreview.innerHTML=qrisImg?`<img src="${qrisImg}" alt="QRIS toko" style="width:100%;max-width:220px;border-radius:10px;border:1px solid #dde6e0">`:'<div class="small">Belum ada QRIS yang diunggah.</div>'}
-function renderAll(){renderTables();renderPOS();renderDashboard();renderFinance();renderAccess();refreshRecipeSelects();try{renderHealth()}catch(e){console.warn(e)}}
+function renderAll(){renderTables();renderPOS();renderDashboard();renderFinance();renderAccess();refreshRecipeSelects();[renderHealth,renderJournal,renderFunds].forEach(f=>{try{f()}catch(e){console.warn(e)}})}
 
 // ---------- Login & peran ----------
 function setGateMode(m,keep){gateMode=m;const reg=m==='register';gateConfWrap.classList.toggle('hidden',!reg);gateTitle.textContent=reg?(ownerExists?'Daftar Pegawai':'Daftar Pemilik'):'Masuk';gateSubText.textContent=reg?(ownerExists?'Akun baru harus disetujui pemilik sebelum bisa dipakai.':'Belum ada pemilik. Akun pertama ini otomatis menjadi pemilik.'):'Gunakan akun yang dibuat pemilik toko.';gateBtn.textContent=reg?'Daftar':'Masuk';gateSwitch.textContent=reg?'Sudah punya akun? Masuk':'Belum punya akun? Daftar';if(!keep)gateMsg.textContent=''}
